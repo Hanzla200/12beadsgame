@@ -314,6 +314,7 @@ export default function Home() {
             <defs><radialGradient id="boardGlow"><stop stopColor="#233632" /><stop offset="1" stopColor="#121d20" /></radialGradient><linearGradient id="redBead" x2="1" y2="1"><stop stopColor="#ff9b7a" /><stop offset=".5" stopColor="#ed6654" /><stop offset="1" stopColor="#a83635" /></linearGradient><linearGradient id="greenBead" x2="1" y2="1"><stop stopColor="#c3ed9a" /><stop offset=".5" stopColor="#80c878" /><stop offset="1" stopColor="#3a815f" /></linearGradient></defs>
             <rect x="8" y="8" width="584" height="584" rx="28" fill="url(#boardGlow)" />
             {edges.map(([a, b]) => <line key={a + "-" + b} x1={points[a].x} y1={points[a].y} x2={points[b].x} y2={points[b].y} className="board-line" />)}
+            {legal.map((move) => <line key={move.source + "-route-" + move.destination} x1={points[move.source].x} y1={points[move.source].y} x2={points[move.destination].x} y2={points[move.destination].y} className="legal-route" />)}
             {points.map(({ i, x, y }) => <g key={i} className={"point " + (destinations.has(i) ? "can-move " : "") + (moveFeedback?.source === i ? "move-source " : "") + (moveFeedback?.destination === i ? "move-destination " : "")} onClick={() => tap(i)} role="button" aria-label={cells[i] ? cells[i] + " bead at point " + (i + 1) : "Empty point " + (i + 1)} tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tap(i); } }}>
               <circle cx={x} cy={y} r="47" className="tap-target" />
               {destinations.has(i) && <circle cx={x} cy={y} r="34" className="destination-ring" />}
@@ -321,9 +322,10 @@ export default function Home() {
               {moveFeedback?.destination === i && <circle cx={x} cy={y} r="40" className="move-ring destination-move-ring" />}
               {selected === i && <circle cx={x} cy={y} r="34" className="selection-ring" />}
               <circle cx={x} cy={y} r="25" className={cells[i] ? "bead " + cells[i] : "board-node"} />{cells[i] && <ellipse cx={x - 7} cy={y - 9} rx="6" ry="4" className="bead-shine" />}
+              {destinations.has(i) && <text x={x} y={y + 4} className="destination-label">GO</text>}
             </g>)}
           </svg><div className="board-stamp"><span>12</span><small>BEADS</small></div></div>
-          <div className="board-footer"><i /> Select a bead, then move along a connected line</div>
+          <div className="board-footer" aria-live="polite"><i /> {selected !== null && destinations.size ? "Tap a glowing GO point to place your bead" : "Select a bead, then move along a connected line"}</div>
         </div>
       </div>
       <aside className="sidebar">
