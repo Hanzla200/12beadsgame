@@ -7,6 +7,7 @@ type Cell = Side | null;
 type Move = { source: number; destination: number; captured: number | null };
 type Mode = "two" | "computer";
 type MoveFeedback = Move & { side: Side; phase: "selecting" | "moving" };
+type ChatMessage = { id: number; author: "red" | "green" | "system"; text: string };
 
 function makeGraph() {
   const graph = Array.from({ length: 25 }, () => new Set<number>());
@@ -178,11 +179,12 @@ function chooseCpuAction(board: Cell[], side: Side): Move[] {
   return bestAction;
 }
 
-function Icon({ type }: { type: "help" | "refresh" | "exit" | "sound" | "mute" }) {
+function Icon({ type }: { type: "help" | "refresh" | "exit" | "sound" | "mute" | "chat" }) {
   if (type === "help") return <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.7 9a2.4 2.4 0 1 1 4 1.8c-1 .8-1.7 1.2-1.7 2.7M12 17h.01" /></svg>;
   if (type === "refresh") return <svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5.6 9A7 7 0 0 1 18 6.5L20 12M4 12l2 5.5A7 7 0 0 0 18.4 15" /></svg>;
   if (type === "sound") return <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10H4ZM17 9a4 4 0 0 1 0 6M19.5 6.5a7.5 7.5 0 0 1 0 11" /></svg>;
   if (type === "mute") return <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10H4M17 10l4 4M21 10l-4 4" /></svg>;
+  if (type === "chat") return <svg viewBox="0 0 24 24"><path d="M5 5.5h14v10H10l-5 4v-14ZM8 9h8M8 12h5" /></svg>;
   return <svg viewBox="0 0 24 24"><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9" /></svg>;
 }
 
@@ -200,6 +202,9 @@ export default function Home() {
   const [thinking, setThinking] = useState(false);
   const [moveFeedback, setMoveFeedback] = useState<MoveFeedback | null>(null);
   const [soundOn, setSoundOn] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatText, setChatText] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{ id: 1, author: "system", text: "Keep it friendly. Good luck! ✨" }]);
   const audioContext = useRef<AudioContext | null>(null);
   const legal = useMemo(() => selected === null ? [] : chain === selected ? legalSteps(cells, selected).filter((m) => m.captured !== null) : legalSteps(cells, selected), [cells, selected, chain]);
   const destinations = new Set(legal.map((m) => m.destination));
@@ -238,6 +243,16 @@ export default function Home() {
     gain.gain.exponentialRampToValueAtTime(kind === "capture" ? .075 : .045, context.currentTime + .012);
     gain.gain.exponentialRampToValueAtTime(.0001, context.currentTime + duration);
     oscillator.connect(gain).connect(context.destination); oscillator.start(); oscillator.stop(context.currentTime + duration + .02);
+  }
+  function sendChat(rawText: string) {
+    const text = rawText.trim();
+    if (!text) return;
+    const author: "red" | "green" = mode === "computer" ? "green" : turn;
+    setChatMessages((messages) => [...messages, { id: Date.now(), author, text }]);
+    setChatText(""); playSound("select");
+    if (mode === "computer") {
+      window.setTimeout(() => setChatMessages((messages) => [...messages, { id: Date.now() + 1, author: "red", text: ["Interesting move! 🤔", "Good luck! 🍀", "That was sharp! ⚡", "I see your plan. 👀"][Math.floor(Math.random() * 4)] }]), 700);
+    }
   }
   function cpuMove(board: Cell[]) {
     const action = chooseCpuAction(board, "red");
@@ -304,7 +319,7 @@ export default function Home() {
     <div className="ambient ambient-one" /><div className="ambient ambient-two" />
     <header className="topbar">
       <a className="brand" href="#"><span className="brand-mark"><i /><i /><i /><i /></span><span>12<span className="brand-light">BEADS</span></span></a>
-      <div className="top-actions"><span className="mode-pill"><i />{mode === "computer" ? "VS COMPUTER" : "TWO PLAYERS"}</span><button className="icon-button" aria-label={soundOn ? "Mute sounds" : "Enable sounds"} aria-pressed={soundOn} onClick={() => setSoundOn((on) => !on)}><Icon type={soundOn ? "sound" : "mute"} /></button><button className="icon-button desktop-only" aria-label="How to play" onClick={() => setHelp(true)}><Icon type="help" /></button><button className="icon-button" aria-label="New game" onClick={() => reset(mode)}><Icon type="refresh" /></button><button className="icon-button desktop-only" aria-label="Game modes" onClick={() => setMenu(true)}><Icon type="exit" /></button></div>
+      <div className="top-actions"><span className="mode-pill"><i />{mode === "computer" ? "VS COMPUTER" : "TWO PLAYERS"}</span><button className={"icon-button chat-toggle " + (chatOpen ? "active" : "")} aria-label="Open game chat" aria-expanded={chatOpen} onClick={() => setChatOpen((open) => !open)}><Icon type="chat" /></button><button className="icon-button" aria-label={soundOn ? "Mute sounds" : "Enable sounds"} aria-pressed={soundOn} onClick={() => setSoundOn((on) => !on)}><Icon type={soundOn ? "sound" : "mute"} /></button><button className="icon-button desktop-only" aria-label="How to play" onClick={() => setHelp(true)}><Icon type="help" /></button><button className="icon-button" aria-label="New game" onClick={() => reset(mode)}><Icon type="refresh" /></button><button className="icon-button desktop-only" aria-label="Game modes" onClick={() => setMenu(true)}><Icon type="exit" /></button></div>
     </header>
     <section className="game-layout">
       <div className="play-column">
@@ -334,6 +349,12 @@ export default function Home() {
         <div className="sidebar-bottom"><i /> READY TO PLAY <span>·</span> EST. TRADITION</div>
       </aside>
     </section>
+    {chatOpen && <aside className="chat-panel" aria-label="Game chat">
+      <div className="chat-header"><div><span className="chat-presence" />TABLE CHAT<small>{mode === "computer" ? "Computer is listening" : "Pass the phone to chat"}</small></div><button className="chat-close" aria-label="Close chat" onClick={() => setChatOpen(false)}>×</button></div>
+      <div className="chat-messages" aria-live="polite">{chatMessages.map((message) => <div key={message.id} className={"chat-message " + message.author}><span>{message.author === "system" ? "✦" : message.author === "red" ? "RED" : "GREEN"}</span><p>{message.text}</p></div>)}</div>
+      <div className="emoji-row">{["👏", "🔥", "🤔", "😄", "⚡", "🍀"].map((emoji) => <button key={emoji} onClick={() => sendChat(emoji)} aria-label={"Send " + emoji}>{emoji}</button>)}</div>
+      <form className="chat-form" onSubmit={(event) => { event.preventDefault(); sendChat(chatText); }}><input value={chatText} onChange={(event) => setChatText(event.target.value)} maxLength={80} placeholder="Write a message…" aria-label="Chat message" /><button aria-label="Send message" type="submit">↑</button></form>
+    </aside>}
     <footer className="page-footer"><span>12 BEADS <b>·</b> BARA TEHNI</span><span>THINK AHEAD. STAY CONNECTED.</span></footer>
     {(menu || help || winner) && <div className="modal-backdrop"><section className="modal-card" role="dialog" aria-modal="true">
       <button className="modal-close" aria-label="Close" onClick={() => { setMenu(false); setHelp(false); }}><Icon type="exit" /></button>
