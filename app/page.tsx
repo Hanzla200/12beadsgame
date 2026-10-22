@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Side = "red" | "green";
 type Cell = Side | null;
 type Move = { source: number; destination: number; captured: number | null };
 type Mode = "two" | "computer";
+type MoveFeedback = Move & { side: Side; phase: "selecting" | "moving" };
 
 function makeGraph() {
   const graph = Array.from({ length: 25 }, () => new Set<number>());
@@ -14,7 +15,10 @@ function makeGraph() {
     const p = row * 5 + col;
     if (col < 4) connect(p, p + 1);
     if (row < 4) connect(p, p + 5);
-    if (row < 4 && col < 4) (row + col) % 2 === 0 ? connect(p, p + 6) : connect(p + 1, p + 5);
+    if (row < 4 && col < 4) {
+      if ((row + col) % 2 === 0) connect(p, p + 6);
+      else connect(p + 1, p + 5);
+    }
   }
   return graph;
 }
@@ -131,7 +135,7 @@ function chooseCpuAction(board: Cell[], side: Side): Move[] {
     const key = keyFor(position, turn);
     if (path.has(key)) return 0;
     const originalAlpha = alpha, originalBeta = beta, entry = table.get(key);
-    let preferred: Move[] | null = entry?.action ?? null;
+    const preferred: Move[] | null = entry?.action ?? null;
     if (entry && entry.depth >= depth) {
       if (entry.flag === "exact") return entry.score;
       if (entry.flag === "lower") alpha = Math.max(alpha, entry.score);
@@ -174,9 +178,11 @@ function chooseCpuAction(board: Cell[], side: Side): Move[] {
   return bestAction;
 }
 
-function Icon({ type }: { type: "help" | "refresh" | "exit" }) {
+function Icon({ type }: { type: "help" | "refresh" | "exit" | "sound" | "mute" }) {
   if (type === "help") return <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.7 9a2.4 2.4 0 1 1 4 1.8c-1 .8-1.7 1.2-1.7 2.7M12 17h.01" /></svg>;
   if (type === "refresh") return <svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5.6 9A7 7 0 0 1 18 6.5L20 12M4 12l2 5.5A7 7 0 0 0 18.4 15" /></svg>;
+  if (type === "sound") return <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10H4ZM17 9a4 4 0 0 1 0 6M19.5 6.5a7.5 7.5 0 0 1 0 11" /></svg>;
+  if (type === "mute") return <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10H4M17 10l4 4M21 10l-4 4" /></svg>;
   return <svg viewBox="0 0 24 24"><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9" /></svg>;
 }
 
@@ -192,17 +198,18 @@ export default function Home() {
   const [winReason, setWinReason] = useState("");
   const [message, setMessage] = useState("Choose a game mode to begin.");
   const [thinking, setThinking] = useState(false);
+  const [moveFeedback, setMoveFeedback] = useState<MoveFeedback | null>(null);
+  const [soundOn, setSoundOn] = useState(true);
+  const audioContext = useRef<AudioContext | null>(null);
   const legal = useMemo(() => selected === null ? [] : chain === selected ? legalSteps(cells, selected).filter((m) => m.captured !== null) : legalSteps(cells, selected), [cells, selected, chain]);
   const destinations = new Set(legal.map((m) => m.destination));
-  const points = Array.from({ length: 25 }, (_, i) => ({ i, x: 70 + i % 5 * 115, y: 70 + Math.floor(i / 5) * 115 }));
+  const points = Array.from({ length: 25 }, (_, i) => ({ i, x: 48 + i % 5 * 126, y: 48 + Math.floor(i / 5) * 126 }));
   const edges = graph.flatMap((neighbors, i) => [...neighbors].filter((n) => n > i).map((n) => [i, n] as const));
-
-  useEffect(() => { setTurn(Math.random() < .5 ? "red" : "green"); }, []);
 
   function reset(nextMode: Mode) {
     const firstTurn: Side = Math.random() < .5 ? "red" : "green";
     setMode(nextMode); setCells(initialBoard()); setTurn(firstTurn);
-    setSelected(null); setChain(null); setWinner(null); setWinReason(""); setThinking(false); setMenu(false);
+    setSelected(null); setChain(null); setWinner(null); setWinReason(""); setThinking(false); setMoveFeedback(null); setMenu(false);
     setMessage(nextMode === "computer" ? firstTurn === "green" ? "Your turn" : "Computer's turn" : firstTurn === "red" ? "Red's turn" : "Green's turn");
   }
   function finish(board: Cell[], moving: Side) {
@@ -215,24 +222,61 @@ export default function Home() {
     setTurn(next);
     setMessage(mode === "computer" ? next === "green" ? "Your turn" : "Computer's turn" : next === "red" ? "Red's turn" : "Green's turn");
   }
+  function playSound(kind: "select" | "move" | "capture" | "win") {
+    if (!soundOn || typeof window === "undefined") return;
+    const AudioContextClass = window.AudioContext;
+    if (!AudioContextClass) return;
+    const context = audioContext.current ?? new AudioContextClass();
+    audioContext.current = context;
+    if (context.state === "suspended") void context.resume();
+    const oscillator = context.createOscillator(), gain = context.createGain();
+    const notes = { select: [440, .045], move: [620, .07], capture: [210, .13], win: [780, .18] } as const;
+    const [frequency, duration] = notes[kind];
+    oscillator.frequency.setValueAtTime(frequency, context.currentTime);
+    oscillator.type = kind === "capture" ? "square" : "sine";
+    gain.gain.setValueAtTime(.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(kind === "capture" ? .075 : .045, context.currentTime + .012);
+    gain.gain.exponentialRampToValueAtTime(.0001, context.currentTime + duration);
+    oscillator.connect(gain).connect(context.destination); oscillator.start(); oscillator.stop(context.currentTime + duration + .02);
+  }
   function cpuMove(board: Cell[]) {
     const action = chooseCpuAction(board, "red");
     if (!action.length) { setThinking(false); finish(board, "green"); return; }
-    const next = applyAction(board, action, "red");
-    setCells(next); setThinking(false); finish(next, "red");
+    let position = board;
+    const showMove = (index: number) => {
+      const move = action[index];
+      setSelected(move.source); setMoveFeedback({ ...move, side: "red", phase: "selecting" });
+      setMessage(index === 0 ? "Computer selected a red bead" : "Computer continues its capture");
+      window.setTimeout(() => {
+        position = applyMove(position, move, "red");
+        setCells(position); setSelected(move.destination); setMoveFeedback({ ...move, side: "red", phase: "moving" });
+        setMessage(move.captured !== null ? "Computer captured a green bead" : "Computer moved its red bead");
+        playSound(move.captured !== null ? "capture" : "move");
+        window.setTimeout(() => {
+          if (index + 1 < action.length) showMove(index + 1);
+          else { setMoveFeedback(null); setThinking(false); finish(position, "red"); }
+        }, 440);
+      }, 460);
+    };
+    showMove(0);
   }
   useEffect(() => {
-    if (mode !== "computer" || turn !== "red" || menu || winner) return;
-    setThinking(true);
-    setMessage("Computer is thinking…");
-    const timer = window.setTimeout(() => cpuMove(cells), 100);
+    if (mode !== "computer" || turn !== "red" || menu || winner || thinking) return;
+    const timer = window.setTimeout(() => {
+      setThinking(true);
+      setMessage("Computer is thinking…");
+      cpuMove(cells);
+    }, 100);
     return () => window.clearTimeout(timer);
-  }, [mode, turn, menu, winner, cells]);
+    // cpuMove deliberately reads the current render's board when this turn begins.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, turn, menu, winner, cells, thinking]);
   function tap(point: number) {
     if (winner || thinking || (mode === "computer" && turn === "red")) return;
     if (selected === null) {
       if (cells[point] === turn) {
         setSelected(point);
+        playSound("select");
         setMessage(legalSteps(cells, point).length ? chain !== null ? "Capture again with this bead" : "Choose a connected point" : "This bead has no legal moves");
       }
       return;
@@ -242,23 +286,25 @@ export default function Home() {
       setSelected(null); setMessage(mode === "computer" ? "Your turn" : (turn === "red" ? "Red" : "Green") + "'s turn"); return;
     }
     if (cells[point] === turn && chain === null) {
-      setSelected(point); setMessage(legalSteps(cells, point).length ? "Choose a connected point" : "This bead has no legal moves"); return;
+      setSelected(point); playSound("select"); setMessage(legalSteps(cells, point).length ? "Choose a connected point" : "This bead has no legal moves"); return;
     }
     if (!destinations.has(point)) { setMessage("That point is not a legal move"); return; }
     const move = legal.find((item) => item.destination === point)!;
     const next = [...cells]; next[move.source] = null; next[point] = turn;
     if (move.captured !== null) next[move.captured] = null;
     setCells(next);
+    setMoveFeedback({ ...move, side: turn, phase: "moving" });
+    playSound(move.captured !== null ? "capture" : "move");
     if (move.captured !== null && legalSteps(next, point).some((item) => item.captured !== null)) {
       setChain(point); setSelected(point); setMessage("Capture again with this bead");
-    } else finish(next, turn);
+    } else { window.setTimeout(() => setMoveFeedback(null), 500); finish(next, turn); }
   }
 
   return <main className="app-shell">
     <div className="ambient ambient-one" /><div className="ambient ambient-two" />
     <header className="topbar">
       <a className="brand" href="#"><span className="brand-mark"><i /><i /><i /><i /></span><span>12<span className="brand-light">BEADS</span></span></a>
-      <div className="top-actions"><span className="mode-pill"><i />{mode === "computer" ? "VS COMPUTER" : "TWO PLAYERS"}</span><button className="icon-button desktop-only" aria-label="How to play" onClick={() => setHelp(true)}><Icon type="help" /></button><button className="icon-button" aria-label="New game" onClick={() => reset(mode)}><Icon type="refresh" /></button><button className="icon-button desktop-only" aria-label="Game modes" onClick={() => setMenu(true)}><Icon type="exit" /></button></div>
+      <div className="top-actions"><span className="mode-pill"><i />{mode === "computer" ? "VS COMPUTER" : "TWO PLAYERS"}</span><button className="icon-button" aria-label={soundOn ? "Mute sounds" : "Enable sounds"} aria-pressed={soundOn} onClick={() => setSoundOn((on) => !on)}><Icon type={soundOn ? "sound" : "mute"} /></button><button className="icon-button desktop-only" aria-label="How to play" onClick={() => setHelp(true)}><Icon type="help" /></button><button className="icon-button" aria-label="New game" onClick={() => reset(mode)}><Icon type="refresh" /></button><button className="icon-button desktop-only" aria-label="Game modes" onClick={() => setMenu(true)}><Icon type="exit" /></button></div>
     </header>
     <section className="game-layout">
       <div className="play-column">
@@ -268,9 +314,13 @@ export default function Home() {
             <defs><radialGradient id="boardGlow"><stop stopColor="#233632" /><stop offset="1" stopColor="#121d20" /></radialGradient><linearGradient id="redBead" x2="1" y2="1"><stop stopColor="#ff9b7a" /><stop offset=".5" stopColor="#ed6654" /><stop offset="1" stopColor="#a83635" /></linearGradient><linearGradient id="greenBead" x2="1" y2="1"><stop stopColor="#c3ed9a" /><stop offset=".5" stopColor="#80c878" /><stop offset="1" stopColor="#3a815f" /></linearGradient></defs>
             <rect x="8" y="8" width="584" height="584" rx="28" fill="url(#boardGlow)" />
             {edges.map(([a, b]) => <line key={a + "-" + b} x1={points[a].x} y1={points[a].y} x2={points[b].x} y2={points[b].y} className="board-line" />)}
-            {points.map(({ i, x, y }) => <g key={i} className="point" onClick={() => tap(i)} role="button" aria-label={cells[i] ? cells[i] + " bead at point " + (i + 1) : "Empty point " + (i + 1)} tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tap(i); } }}>
+            {points.map(({ i, x, y }) => <g key={i} className={"point " + (destinations.has(i) ? "can-move " : "") + (moveFeedback?.source === i ? "move-source " : "") + (moveFeedback?.destination === i ? "move-destination " : "")} onClick={() => tap(i)} role="button" aria-label={cells[i] ? cells[i] + " bead at point " + (i + 1) : "Empty point " + (i + 1)} tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tap(i); } }}>
+              <circle cx={x} cy={y} r="47" className="tap-target" />
+              {destinations.has(i) && <circle cx={x} cy={y} r="34" className="destination-ring" />}
+              {moveFeedback?.source === i && <circle cx={x} cy={y} r="38" className="move-ring source-ring" />}
+              {moveFeedback?.destination === i && <circle cx={x} cy={y} r="40" className="move-ring destination-move-ring" />}
               {selected === i && <circle cx={x} cy={y} r="34" className="selection-ring" />}
-              <circle cx={x} cy={y} r="19" className={cells[i] ? "bead " + cells[i] : "board-node"} />{cells[i] && <ellipse cx={x - 5} cy={y - 7} rx="5" ry="3" className="bead-shine" />}
+              <circle cx={x} cy={y} r="25" className={cells[i] ? "bead " + cells[i] : "board-node"} />{cells[i] && <ellipse cx={x - 7} cy={y - 9} rx="6" ry="4" className="bead-shine" />}
             </g>)}
           </svg><div className="board-stamp"><span>12</span><small>BEADS</small></div></div>
           <div className="board-footer"><i /> Select a bead, then move along a connected line</div>
